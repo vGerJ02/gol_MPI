@@ -2,13 +2,14 @@
 #define RENDER_H_
 
 #include "./game.h"
+#include "./mpi_logic.h"
 #include <SDL2/SDL.h>
 #include <stdbool.h>
 
 extern bool Graphical_Mode;
-
 void render_board(SDL_Renderer *renderer, board_t *board,
-                  unsigned char neighbors[D_COL_NUM][D_ROW_NUM]);
+                  unsigned char neighbors[D_ROW_NUM][D_COL_NUM],
+                  data_mpi_t data);
 
 void render_running_state(SDL_Renderer *renderer, board_t *board);
 

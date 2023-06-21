@@ -8,7 +8,8 @@
 bool Graphical_Mode = false;
 
 void render_board(SDL_Renderer *renderer, board_t *board,
-                  unsigned char neighbors[D_ROW_NUM][D_COL_NUM]) {
+                  unsigned char neighbors[D_ROW_NUM][D_COL_NUM],
+                  data_mpi_t data) {
   int size, rank;
   MPI_Comm_size(MPI_COMM_WORLD, &size);
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
@@ -19,7 +20,7 @@ void render_board(SDL_Renderer *renderer, board_t *board,
 
     if (size > 0) {
       // Distribute neighbors
-      distributeRows(board);
+      distributeRows(board, data);
 
     } else {
       count_neighbors(board, neighbors);

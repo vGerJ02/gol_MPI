@@ -30,12 +30,10 @@ void printToFile(unsigned char *subarray, int rank, int rows, int cols) {
     printf("error file\n");
   }
 }
-void distributeRows(board_t *fullboard) {
+void distributeRows(board_t *fullboard, data_mpi_t data) {
   // Returns the partitioned board of the current process
   int rank, size;
-  int rows_per_process, remaining_rows;
-  int *sendcounts;
-  int *displs;
+
   unsigned char *subarray;
   unsigned char *recv_buffer = NULL;
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
@@ -60,55 +58,52 @@ void distributeRows(board_t *fullboard) {
     for (int j = 0; j < fullboard->COL_NUM; j++)
       board[i][j] = fullboard->cell_state[i][j];
 
-  rows_per_process = fullboard->ROW_NUM / size;
-  remaining_rows = fullboard->ROW_NUM % size;
+  data.rows_per_process = fullboard->ROW_NUM / size;
+  data.remaining_rows = fullboard->ROW_NUM % size;
 
-  sendcounts = (int *)malloc(size * sizeof(unsigned char));
-  displs = (int *)malloc(size * sizeof(unsigned char));
+  // TODO: Move out
+  //  sendcounts = (int *)malloc(size * sizeof(unsigned char));
+  //  displs = (int *)malloc(size * sizeof(unsigned char));
 
-  // Set the size of each subarray and the offset
-  int offset = 0;
-  for (int i = 0; i < size; i++) {
-    sendcounts[i] = (i < remaining_rows)
-                        ? (rows_per_process + 1) * fullboard->COL_NUM
-                        : rows_per_process * fullboard->COL_NUM;
-    displs[i] = offset;
-    offset += sendcounts[i];
-    printf("[%d] snedCounts %d offset %d\n", rank, sendcounts[i], displs[i]);
-  }
+  // // Set the size of each subarray and the offset
+  // int offset = 0;
+  // for (int i = 0; i < size; i++) {
+  //   sendcounts[i] = (i < remaining_rows)
+  //                       ? (rows_per_process + 1) * fullboard->COL_NUM
+  //                       : rows_per_process * fullboard->COL_NUM;
+  //   displs[i] = offset;
+  //   offset += sendcounts[i];
+  // }
 
-  int local_size = sendcounts[rank];
+  int local_size = data.sendcounts[rank];
   subarray = (unsigned char *)malloc(local_size * sizeof(unsigned char));
 
-  // NOTE: cellstate is [4000][4000]. Is it ok? NO
-  MPI_Scatterv(board, sendcounts, displs, MPI_UNSIGNED_CHAR, subarray,
+  MPI_Scatterv(board, data.sendcounts, data.displs, MPI_UNSIGNED_CHAR, subarray,
                local_size, MPI_UNSIGNED_CHAR, 0, MPI_COMM_WORLD);
 
   //  Count neighbors (and sends borders)
-  //  FIX: set neighbors correctly
-  int local_rows =
-      (rank < remaining_rows) ? rows_per_process + 1 : rows_per_process;
+  int local_rows = (rank < data.remaining_rows) ? data.rows_per_process + 1
+                                                : data.rows_per_process;
   unsigned char *partNeighbors = (unsigned char *)malloc(
       local_rows * fullboard->COL_NUM * sizeof(unsigned char));
 
   printf("[%d] Processing %d rows of %d\n", rank, local_rows,
          fullboard->COL_NUM);
 
-  printToFile(subarray, rank, local_rows, fullboard->COL_NUM);
-  // unsigned char neighbors[D_COL_NUM][D_ROW_NUM];
+  // printToFile(subarray, rank, local_rows, fullboard->COL_NUM);
   count_neighbors_spherical_world_mpi_v2(subarray, fullboard->COL_NUM,
                                          local_rows, partNeighbors, rank, size);
   printf("[%d] neightbors counted\n", rank);
   evolve_mpi(subarray, partNeighbors, local_rows, fullboard->COL_NUM);
 
-  printf("[%d] evolved\n", rank);
   if (rank == 0) {
     recv_buffer = (unsigned char *)malloc(
         fullboard->ROW_NUM * fullboard->COL_NUM * sizeof(unsigned char));
   }
 
-  MPI_Gatherv(subarray, local_size, MPI_UNSIGNED_CHAR, recv_buffer, sendcounts,
-              displs, MPI_UNSIGNED_CHAR, 0, MPI_COMM_WORLD);
+  MPI_Gatherv(subarray, local_size, MPI_UNSIGNED_CHAR, recv_buffer,
+              data.sendcounts, data.displs, MPI_UNSIGNED_CHAR, 0,
+              MPI_COMM_WORLD);
 
   // convert recv_buffer to 2D array
   if (rank == 0) {
@@ -124,8 +119,6 @@ void distributeRows(board_t *fullboard) {
     fclose(ptr);
     free(recv_buffer);
 
-    free(sendcounts);
-    free(displs);
     free(partNeighbors);
   }
 }
@@ -266,9 +259,11 @@ void count_neighbors_spherical_world_mpi_v2(unsigned char *board, int cols,
   // MPI_Irecv(upperborder, cols, MPI_INT, upperRank, 0,
   // MPI_COMM_WORLD, &r1); MPI_Irecv(lowerborder, cols, MPI_INT,
   // lowerRank, 1, MPI_COMM_WORLD, &r2);
-  send_borders(board, cols, rows, rank, size);
-  MPI_Irecv(upperborder, cols, MPI_INT, upperRank, 1, MPI_COMM_WORLD, &r1);
-  MPI_Irecv(lowerborder, cols, MPI_INT, lowerRank, 0, MPI_COMM_WORLD, &r2);
+  if (size == 0) {
+    send_borders(board, cols, rows, rank, size);
+    MPI_Irecv(upperborder, cols, MPI_INT, upperRank, 1, MPI_COMM_WORLD, &r1);
+    MPI_Irecv(lowerborder, cols, MPI_INT, lowerRank, 0, MPI_COMM_WORLD, &r2);
+  }
   // Convert to 2D array just to be more clear
   unsigned char cell_state[rows][cols];
   for (int i = 0; i < rows; i++) {
@@ -318,20 +313,24 @@ void count_neighbors_spherical_world_mpi_v2(unsigned char *board, int cols,
     }
   }
 
-  // Wait for both recv
-  // FIX: MPI_STATUS_IGNORE
-  printf("[%d] Waiting to receivw\n", rank);
-  MPI_Wait(&r1, MPI_STATUS_IGNORE);
+  if (size == 0) {
+    // Wait for both recv
+    // FIX: MPI_STATUS_IGNORE
+    printf("[%d] Waiting to receivw\n", rank);
+    MPI_Wait(&r1, MPI_STATUS_IGNORE);
 
-  printf("[%d] Waiting to receiv2\n", rank);
-  MPI_Wait(&r2, MPI_STATUS_IGNORE);
+    printf("[%d] Waiting to receiv2\n", rank);
+    MPI_Wait(&r2, MPI_STATUS_IGNORE);
 
-  printf("[%d] received borders\n", rank);
-  // add neighbors to first and last
-  // FIX: Check rows and cols. I thing in the for above is wrong
-  for (int j = 0; j < cols; j++) {
-    neighbors[0 * cols + j] += upperborder[j];
-    neighbors[(rows - 1) * cols + j] += lowerborder[j];
+    printf("[%d] received borders\n", rank);
+    // add neighbors to first and last
+    // FIX: Check rows and cols. I thing in the for above is wrong
+
+    for (int j = 0; j < cols; j++) {
+      neighbors[0 * cols + j] += upperborder[j];
+      neighbors[(rows - 1) * cols + j] += lowerborder[j];
+      // printf("[%d]%d %d\n", rank, upperborder[j], lowerborder[j]);
+    }
   }
 }
 

@@ -200,12 +200,28 @@ int main(int argc, char **argv) {
     }
   }
 
-  printf("Start Simulatiom.\n");
+  printf("[%d] Start Simulatiom.\n", rank);
   fflush(stdout);
   bool quit = false;
   int Iteration = 0;
 
-  printf("[%d] Process starting.\n", rank);
+  // Load balancing
+  data_mpi_t data;
+  data.rows_per_process = board->ROW_NUM / size;
+  data.remaining_rows = board->ROW_NUM % size;
+
+  data.sendcounts = (int *)malloc(size * sizeof(unsigned char));
+  data.displs = (int *)malloc(size * sizeof(unsigned char));
+
+  // Set the size of each subarray and the offset
+  int offset = 0;
+  for (int i = 0; i < size; i++) {
+    data.sendcounts[i] = (i < data.remaining_rows)
+                             ? (data.rows_per_process + 1) * board->COL_NUM
+                             : data.rows_per_process * board->COL_NUM;
+    data.displs[i] = offset;
+    offset += data.sendcounts[i];
+  }
 
   while (quit == false && (EndTime < 0 || Iteration < EndTime)) {
 
@@ -306,7 +322,7 @@ int main(int argc, char **argv) {
     }
 
     printf("[%d] Iteration %d starting.\n", rank, Iteration);
-    render_board(renderer, board, neighbors);
+    render_board(renderer, board, neighbors, data);
 
     MPI_Barrier(MPI_COMM_WORLD);
 
@@ -317,13 +333,11 @@ int main(int argc, char **argv) {
         usleep(TICKS);
       }
 
-      // Iteration++;
       printf("[%05d] Life Game Simulation step.\r", Iteration);
       fflush(stdout);
     }
   }
 
-  MPI_Barrier(MPI_COMM_WORLD);
   if (rank == 0) {
 
     printf("\nEnd Simulation.\n");
@@ -341,6 +355,9 @@ int main(int argc, char **argv) {
       life_write(output_file, board);
     }
   }
+  free(data.sendcounts);
+  free(data.displs);
+
   MPI_Finalize();
   return EXIT_SUCCESS;
 }
