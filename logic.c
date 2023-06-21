@@ -183,16 +183,18 @@ void send_borders(unsigned char *board, int cols, int rows, int rank,
   // Initializes to 0
   memset(neighbors_to_send, 0, 2 * cols * sizeof(int));
 
-  // send first row
+  // Count neighbors to send
   count_neighbors_of_1_row(&board[0], cols, neighbors_to_send, 0);
   dest = (rank - 1 < 0) ? size - 1 : rank - 1;
 
+  // send the first row
   MPI_Isend(neighbors_to_send, cols, MPI_INT, dest, 0, MPI_COMM_WORLD, &r1);
   printf("[%d] Sent to %d\n", rank, dest);
+
   // Set dest to next border
   dest = (rank + 1 >= size) ? 0 : rank + 1;
   if (rows > 1) {
-    // TODO: Check if rows starts at 0
+    // Count neighbors of last row
     count_neighbors_of_1_row(&board[(rows - 1) * cols], cols, neighbors_to_send,
                              cols);
 
@@ -255,16 +257,14 @@ void count_neighbors_spherical_world_mpi_v2(unsigned char *board, int cols,
   MPI_Request r1, r2;
   MPI_Status s1, s2;
 
-  printf("[%d] Sending to %d and %d\n", rank, upperRank, lowerRank);
-  // MPI_Irecv(upperborder, cols, MPI_INT, upperRank, 0,
-  // MPI_COMM_WORLD, &r1); MPI_Irecv(lowerborder, cols, MPI_INT,
-  // lowerRank, 1, MPI_COMM_WORLD, &r2);
-  if (size == 0) {
+  printf("[%d] Sending to %d and %d %d \n", rank, upperRank, lowerRank, size);
+
+  if (size != 0) {
     send_borders(board, cols, rows, rank, size);
     MPI_Irecv(upperborder, cols, MPI_INT, upperRank, 1, MPI_COMM_WORLD, &r1);
     MPI_Irecv(lowerborder, cols, MPI_INT, lowerRank, 0, MPI_COMM_WORLD, &r2);
   }
-  // Convert to 2D array just to be more clear
+  // Convert to 2D array just to be more easy
   unsigned char cell_state[rows][cols];
   for (int i = 0; i < rows; i++) {
     for (int j = 0; j < cols; j++) {
@@ -279,41 +279,84 @@ void count_neighbors_spherical_world_mpi_v2(unsigned char *board, int cols,
     }
   }
 
-  // Inner cells
-  for (int i = 0; i < rows; i++) {
+  // Flat only on top bottom
+  //  Inner cells
+  for (int i = 1; i < rows - 1; i++) {
     for (int j = 0; j < cols; j++) {
-      i_prev = (1 < i) ? i - 1 : rows;
-      i_next = (i < rows) ? i + 1 : 0;
-      j_prev = (1 < j) ? j - 1 : cols;
+      j_prev = (1 < j) ? j - 1 : cols - 1;
       j_next = (j < cols) ? j + 1 : 0;
-      if (cell_state[i_prev][j_prev] == ALIVE) {
+      if (cell_state[i - 1][j_prev] == ALIVE) {
         neighbors[i * cols + j]++;
       }
       if (cell_state[i][j_prev] == ALIVE) {
         neighbors[i * cols + j]++;
       }
-      if (cell_state[i_next][j_prev] == ALIVE) {
+      if (cell_state[i + 1][j_prev] == ALIVE) {
         neighbors[i * cols + j]++;
       }
-      if (cell_state[i_prev][j] == ALIVE) {
+      if (cell_state[i - 1][j] == ALIVE) {
         neighbors[i * cols + j]++;
       }
-      if (cell_state[i_next][j] == ALIVE) {
+      if (cell_state[i + 1][j] == ALIVE) {
         neighbors[i * cols + j]++;
       }
-      if (cell_state[i_prev][j_next] == ALIVE) {
+      if (cell_state[i - 1][j_next] == ALIVE) {
         neighbors[i * cols + j]++;
       }
       if (cell_state[i][j_next] == ALIVE) {
         neighbors[i * cols + j]++;
       }
-      if (cell_state[i_next][j_next] == ALIVE) {
+      if (cell_state[i + 1][j_next] == ALIVE) {
         neighbors[i * cols + j]++;
       }
     }
   }
 
-  if (size == 0) {
+  // top cells
+  for (int j = 0; j < cols; j++) {
+    j_prev = (1 < j) ? j - 1 : cols - 1;
+    j_next = (j < cols) ? j + 1 : 0;
+    if (cell_state[0][j_prev] == ALIVE) {
+      // 0 * cols + j = j
+      neighbors[j]++;
+    }
+    if (cell_state[1][j_prev] == ALIVE) {
+      neighbors[j]++;
+    }
+    if (cell_state[1][j] == ALIVE) {
+      neighbors[j]++;
+    }
+    if (cell_state[1][j_next] == ALIVE) {
+      neighbors[j]++;
+    }
+    if (cell_state[0][j_next] == ALIVE) {
+      neighbors[j]++;
+    }
+  }
+
+  // bottom cells
+  for (int j = 0; j < cols; j++) {
+    j_prev = (1 < j) ? j - 1 : cols - 1;
+    j_next = (j < cols) ? j + 1 : 0;
+    if (cell_state[cols - 1][j_prev] == ALIVE) {
+      // 0 * cols + j = j
+      neighbors[j]++;
+    }
+    if (cell_state[cols - 2][j_prev] == ALIVE) {
+      neighbors[j]++;
+    }
+    if (cell_state[cols - 2][j] == ALIVE) {
+      neighbors[j]++;
+    }
+    if (cell_state[cols - 2][j_next] == ALIVE) {
+      neighbors[j]++;
+    }
+    if (cell_state[cols - 1][j_next] == ALIVE) {
+      neighbors[j]++;
+    }
+  }
+
+  if (size != 0) {
     // Wait for both recv
     // FIX: MPI_STATUS_IGNORE
     printf("[%d] Waiting to receivw\n", rank);
@@ -324,12 +367,11 @@ void count_neighbors_spherical_world_mpi_v2(unsigned char *board, int cols,
 
     printf("[%d] received borders\n", rank);
     // add neighbors to first and last
-    // FIX: Check rows and cols. I thing in the for above is wrong
 
     for (int j = 0; j < cols; j++) {
       neighbors[0 * cols + j] += upperborder[j];
       neighbors[(rows - 1) * cols + j] += lowerborder[j];
-      // printf("[%d]%d %d\n", rank, upperborder[j], lowerborder[j]);
+      printf("[%d]%d %d\n", rank, upperborder[j], lowerborder[j]);
     }
   }
 }
