@@ -19,7 +19,7 @@ void render_board(SDL_Renderer *renderer, board_t *board,
       render_running_state(renderer, board);
 
     if (size > 0) {
-      // Distribute neighbors
+      // Distribute neighbors, count and evolve
       distributeRows(board, data);
 
     } else {

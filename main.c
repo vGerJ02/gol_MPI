@@ -357,6 +357,7 @@ int main(int argc, char **argv) {
   }
   free(data.sendcounts);
   free(data.displs);
+  free(board);
 
   MPI_Finalize();
   return EXIT_SUCCESS;

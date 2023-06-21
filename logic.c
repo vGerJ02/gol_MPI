@@ -11,7 +11,8 @@ void count_neighbors(board_t *board,
   count_neighbors_spherical_world(board, neighbors);
 }
 
-void printToFile(unsigned char *subarray, int rank, int rows, int cols) {
+void printProcWorkToFile(unsigned char *subarray, int rank, int rows,
+                         int cols) {
   char filename[100];
   sprintf(filename, "output_%d.txt", rank);
   FILE *file = fopen(filename, "a");
@@ -24,7 +25,7 @@ void printToFile(unsigned char *subarray, int rank, int rows, int cols) {
       }
       fprintf(file, "\n");
     }
-    fprintf(file, "///////////////\n");
+    fprintf(file, "\n");
     fclose(file);
   } else {
     printf("error file\n");
@@ -39,19 +40,6 @@ void distributeRows(board_t *fullboard, data_mpi_t data) {
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
   MPI_Comm_size(MPI_COMM_WORLD, &size);
 
-  if (rank == 0) {
-    FILE *ptr = fopen("iterations.txt", "a");
-    for (int i = 0; i < fullboard->ROW_NUM; i++) {
-      for (int j = 0; j < fullboard->COL_NUM; j++) {
-        fprintf(ptr, "%d ", fullboard->cell_state[i][j]);
-      }
-      fprintf(ptr, "\n");
-    }
-    fprintf(ptr, "after----\n");
-    fclose(ptr);
-  }
-
-  // FIX: set it outside so int onlys is done once by rank 0. Arg of funct
   unsigned char board[fullboard->ROW_NUM][fullboard->COL_NUM];
   // copy
   for (int i = 0; i < fullboard->ROW_NUM; i++)
@@ -60,20 +48,6 @@ void distributeRows(board_t *fullboard, data_mpi_t data) {
 
   data.rows_per_process = fullboard->ROW_NUM / size;
   data.remaining_rows = fullboard->ROW_NUM % size;
-
-  // TODO: Move out
-  //  sendcounts = (int *)malloc(size * sizeof(unsigned char));
-  //  displs = (int *)malloc(size * sizeof(unsigned char));
-
-  // // Set the size of each subarray and the offset
-  // int offset = 0;
-  // for (int i = 0; i < size; i++) {
-  //   sendcounts[i] = (i < remaining_rows)
-  //                       ? (rows_per_process + 1) * fullboard->COL_NUM
-  //                       : rows_per_process * fullboard->COL_NUM;
-  //   displs[i] = offset;
-  //   offset += sendcounts[i];
-  // }
 
   int local_size = data.sendcounts[rank];
   subarray = (unsigned char *)malloc(local_size * sizeof(unsigned char));
@@ -90,10 +64,9 @@ void distributeRows(board_t *fullboard, data_mpi_t data) {
   printf("[%d] Processing %d rows of %d\n", rank, local_rows,
          fullboard->COL_NUM);
 
-  // printToFile(subarray, rank, local_rows, fullboard->COL_NUM);
+  printProcWorkToFile(subarray, rank, local_rows, fullboard->COL_NUM);
   count_neighbors_spherical_world_mpi_v2(subarray, fullboard->COL_NUM,
                                          local_rows, partNeighbors, rank, size);
-  printf("[%d] neightbors counted\n", rank);
   evolve_mpi(subarray, partNeighbors, local_rows, fullboard->COL_NUM);
 
   if (rank == 0) {
@@ -105,7 +78,7 @@ void distributeRows(board_t *fullboard, data_mpi_t data) {
               data.sendcounts, data.displs, MPI_UNSIGNED_CHAR, 0,
               MPI_COMM_WORLD);
 
-  // convert recv_buffer to 2D array
+  // convert recv_buffer to 2D array and print to file
   if (rank == 0) {
     FILE *ptr = fopen("iterations.txt", "a");
     for (int i = 0; i < fullboard->ROW_NUM; i++) {
@@ -115,12 +88,13 @@ void distributeRows(board_t *fullboard, data_mpi_t data) {
       }
       fprintf(ptr, "\n");
     }
-    fprintf(ptr, "///////////////\n");
+    fprintf(ptr, "\n");
     fclose(ptr);
-    free(recv_buffer);
 
-    free(partNeighbors);
+    free(recv_buffer);
   }
+  free(partNeighbors);
+  free(subarray);
 }
 
 // board and neighbors
@@ -164,7 +138,7 @@ void count_neighbors_of_1_row(unsigned char *row, int cols, int *neighbors,
   // offset indicates if first row or last
   int i_prev, i_next;
   for (int i = 0; i < cols; i++) {
-    i_prev = (i > 0) ? i - 1 : cols;
+    i_prev = (i > 0) ? i - 1 : cols - 1;
     i_next = (i < cols - 1) ? i + 1 : 0;
     if (row[i] == ALIVE)
       neighbors[i + offset] += 1;
@@ -189,7 +163,6 @@ void send_borders(unsigned char *board, int cols, int rows, int rank,
 
   // send the first row
   MPI_Isend(neighbors_to_send, cols, MPI_INT, dest, 0, MPI_COMM_WORLD, &r1);
-  printf("[%d] Sent to %d\n", rank, dest);
 
   // Set dest to next border
   dest = (rank + 1 >= size) ? 0 : rank + 1;
@@ -201,46 +174,15 @@ void send_borders(unsigned char *board, int cols, int rows, int rank,
     // MPI send neighbors from cols to 2*cols
     MPI_Isend(&neighbors_to_send[cols], cols, MPI_INT, dest, 1, MPI_COMM_WORLD,
               &r2);
-  } else {
+  } else { // If block only has one row
     // Send the same as before but to next border
     MPI_Isend(neighbors_to_send, cols, MPI_INT, dest, 1, MPI_COMM_WORLD, &r2);
   }
-  printf("[%d] Sent to %d\n", rank, dest);
 
   // Wait sending complete
-  //  FIX: stauts is always other. When error, send to all proc finish
+  //  FIX: stauts is always other
   MPI_Wait(&r1, MPI_STATUS_IGNORE);
   MPI_Wait(&r2, MPI_STATUS_IGNORE);
-
-  if (MPI_SUCCESS != MPI_SUCCESS) {
-    printf("ERROR! Process [%d] received: ", rank);
-    switch (st.MPI_ERROR) {
-    case MPI_ERR_COMM:
-      printf("MPI_ERR_COMM ");
-      break;
-    case MPI_ERR_COUNT:
-      printf("MPI_ERR_COUNT");
-      break;
-    case MPI_ERR_TYPE:
-      printf("MPI_ERR_TYPE");
-      break;
-    case MPI_ERR_TAG:
-      printf("MPI_ERR_TAG");
-      break;
-    case MPI_ERR_RANK:
-      printf("MPI_ERR_RANK");
-      break;
-    case MPI_ERR_INTERN:
-      printf("MPI_ERR_INTERN");
-      break;
-    default:
-      printf("OTHER");
-      break;
-    }
-    printf(" (code %d)\n", st.MPI_ERROR);
-    free(neighbors_to_send);
-    exit(-1);
-  }
 
   free(neighbors_to_send);
 }
@@ -257,9 +199,9 @@ void count_neighbors_spherical_world_mpi_v2(unsigned char *board, int cols,
   MPI_Request r1, r2;
   MPI_Status s1, s2;
 
-  printf("[%d] Sending to %d and %d %d \n", rank, upperRank, lowerRank, size);
-
   if (size != 0) {
+    printf("[%d] Sending neighbors to %d and %d %d \n", rank, upperRank,
+           lowerRank, size);
     send_borders(board, cols, rows, rank, size);
     MPI_Irecv(upperborder, cols, MPI_INT, upperRank, 1, MPI_COMM_WORLD, &r1);
     MPI_Irecv(lowerborder, cols, MPI_INT, lowerRank, 0, MPI_COMM_WORLD, &r2);
@@ -358,22 +300,19 @@ void count_neighbors_spherical_world_mpi_v2(unsigned char *board, int cols,
 
   if (size != 0) {
     // Wait for both recv
-    // FIX: MPI_STATUS_IGNORE
-    printf("[%d] Waiting to receivw\n", rank);
     MPI_Wait(&r1, MPI_STATUS_IGNORE);
-
-    printf("[%d] Waiting to receiv2\n", rank);
     MPI_Wait(&r2, MPI_STATUS_IGNORE);
 
-    printf("[%d] received borders\n", rank);
+    printf("[%d] Received borders\n", rank);
     // add neighbors to first and last
 
     for (int j = 0; j < cols; j++) {
       neighbors[0 * cols + j] += upperborder[j];
       neighbors[(rows - 1) * cols + j] += lowerborder[j];
-      printf("[%d]%d %d\n", rank, upperborder[j], lowerborder[j]);
     }
   }
+  free(upperborder);
+  free(lowerborder);
 }
 
 void count_neighbors_spherical_world(
