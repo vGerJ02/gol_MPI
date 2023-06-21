@@ -53,11 +53,18 @@ void distributeRows(board_t *fullboard) {
     fclose(ptr);
   }
 
+  // FIX: set it outside so int onlys is done once by rank 0. Arg of funct
+  unsigned char board[fullboard->ROW_NUM][fullboard->COL_NUM];
+  // copy
+  for (int i = 0; i < fullboard->ROW_NUM; i++)
+    for (int j = 0; j < fullboard->COL_NUM; j++)
+      board[i][j] = fullboard->cell_state[i][j];
+
   rows_per_process = fullboard->ROW_NUM / size;
   remaining_rows = fullboard->ROW_NUM % size;
 
-  sendcounts = (int *)malloc(size * sizeof(int));
-  displs = (int *)malloc(size * sizeof(int));
+  sendcounts = (int *)malloc(size * sizeof(unsigned char));
+  displs = (int *)malloc(size * sizeof(unsigned char));
 
   // Set the size of each subarray and the offset
   int offset = 0;
@@ -73,9 +80,9 @@ void distributeRows(board_t *fullboard) {
   int local_size = sendcounts[rank];
   subarray = (unsigned char *)malloc(local_size * sizeof(unsigned char));
 
-  // NOTE: cellstate is [4000][4000]. Is it ok? YES!
-  MPI_Scatterv(fullboard->cell_state, sendcounts, displs, MPI_UNSIGNED_CHAR,
-               subarray, local_size, MPI_UNSIGNED_CHAR, 0, MPI_COMM_WORLD);
+  // NOTE: cellstate is [4000][4000]. Is it ok? NO
+  MPI_Scatterv(board, sendcounts, displs, MPI_UNSIGNED_CHAR, subarray,
+               local_size, MPI_UNSIGNED_CHAR, 0, MPI_COMM_WORLD);
 
   //  Count neighbors (and sends borders)
   //  FIX: set neighbors correctly
