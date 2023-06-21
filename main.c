@@ -34,7 +34,10 @@ int main(int argc, char **argv) {
   int EndTime = -1;
   char input_file[256], output_file[256];
 
-  printf("hello\n");
+  int rank, size;
+  MPI_Init(&argc, &argv);
+  MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+  MPI_Comm_size(MPI_COMM_WORLD, &size);
   // Graphics.
   int SCREEN_WIDTH;
   int SCREEN_HEIGHT;
@@ -202,11 +205,6 @@ int main(int argc, char **argv) {
   bool quit = false;
   int Iteration = 0;
 
-  int rank, size;
-  printf("before Iniit\n");
-  MPI_Init(&argc, &argv);
-  MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-  MPI_Comm_size(MPI_COMM_WORLD, &size);
   printf("[%d] Process starting.\n", rank);
 
   while (quit == false && (EndTime < 0 || Iteration < EndTime)) {
@@ -310,10 +308,9 @@ int main(int argc, char **argv) {
     printf("[%d] Iteration %d starting.\n", rank, Iteration);
     render_board(renderer, board, neighbors);
 
-    if (size > 0) {
-      MPI_Barrier(MPI_COMM_WORLD);
-    }
+    MPI_Barrier(MPI_COMM_WORLD);
 
+    Iteration++;
     if (rank == 0) {
       if (Graphical_Mode) {
         SDL_RenderPresent(renderer);
@@ -321,27 +318,29 @@ int main(int argc, char **argv) {
       }
 
       // Iteration++;
-      printf("[%05d] Life Game Simulation step.\r", ++Iteration);
+      printf("[%05d] Life Game Simulation step.\r", Iteration);
       fflush(stdout);
     }
   }
 
+  MPI_Barrier(MPI_COMM_WORLD);
+  if (rank == 0) {
+
+    printf("\nEnd Simulation.\n");
+
+    if (Graphical_Mode) {
+      // Clean up
+      SDL_DestroyWindow(window);
+      SDL_Quit();
+    }
+
+    // Save board
+    if (SaveFile) {
+      printf("Writting Board file %s.\n", output_file);
+      fflush(stdout);
+      life_write(output_file, board);
+    }
+  }
   MPI_Finalize();
-
-  printf("\nEnd Simulation.\n");
-
-  if (Graphical_Mode) {
-    // Clean up
-    SDL_DestroyWindow(window);
-    SDL_Quit();
-  }
-
-  // Save board
-  if (SaveFile) {
-    printf("Writting Board file %s.\n", output_file);
-    fflush(stdout);
-    life_write(output_file, board);
-  }
-
   return EXIT_SUCCESS;
 }

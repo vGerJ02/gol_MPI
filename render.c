@@ -19,7 +19,6 @@ void render_board(SDL_Renderer *renderer, board_t *board,
 
     if (size > 0) {
       // Distribute neighbors
-      printf("[%d] Preparing to distribute\n", rank);
       distributeRows(board);
 
     } else {

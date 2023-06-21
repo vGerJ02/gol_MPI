@@ -34,4 +34,3 @@ set(CMAKE_SYSTEM_PREFIX_PATH ${CMAKE_CURRENT_SOURCE_DIR})
 add_executable(conway ${SRCS} ${HEADERS})
 target_link_libraries(conway SDL2::Main ${MPI_C_LIBRARIES})
 install(TARGETS ${PROJECT_NAME} DESTINATION ${CMAKE_CURRENT_SOURCE_DIR})
-

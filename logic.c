@@ -11,6 +11,25 @@ void count_neighbors(board_t *board,
   count_neighbors_spherical_world(board, neighbors);
 }
 
+void printToFile(unsigned char *subarray, int rank, int rows, int cols) {
+  char filename[100];
+  sprintf(filename, "output_%d.txt", rank);
+  FILE *file = fopen(filename, "a");
+  if (file != NULL) {
+    for (int i = 0; i < rows; i++) {
+      fprintf(file, "ROW %d: ", i);
+      for (int j = 0; j < cols; j++) {
+
+        fprintf(file, "%d ", subarray[i * cols + j]);
+      }
+      fprintf(file, "\n");
+    }
+    fprintf(file, "///////////////\n");
+    fclose(file);
+  } else {
+    printf("error file\n");
+  }
+}
 void distributeRows(board_t *fullboard) {
   // Returns the partitioned board of the current process
   int rank, size;
@@ -21,6 +40,18 @@ void distributeRows(board_t *fullboard) {
   unsigned char *recv_buffer = NULL;
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
   MPI_Comm_size(MPI_COMM_WORLD, &size);
+
+  if (rank == 0) {
+    FILE *ptr = fopen("iterations.txt", "a");
+    for (int i = 0; i < fullboard->ROW_NUM; i++) {
+      for (int j = 0; j < fullboard->COL_NUM; j++) {
+        fprintf(ptr, "%d ", fullboard->cell_state[i][j]);
+      }
+      fprintf(ptr, "\n");
+    }
+    fprintf(ptr, "after----\n");
+    fclose(ptr);
+  }
 
   rows_per_process = fullboard->ROW_NUM / size;
   remaining_rows = fullboard->ROW_NUM % size;
@@ -36,17 +67,15 @@ void distributeRows(board_t *fullboard) {
                         : rows_per_process * fullboard->COL_NUM;
     displs[i] = offset;
     offset += sendcounts[i];
+    printf("[%d] snedCounts %d offset %d\n", rank, sendcounts[i], displs[i]);
   }
 
   int local_size = sendcounts[rank];
   subarray = (unsigned char *)malloc(local_size * sizeof(unsigned char));
 
-  printf("[%d] before scatterv\n", rank);
   // NOTE: cellstate is [4000][4000]. Is it ok? YES!
   MPI_Scatterv(fullboard->cell_state, sendcounts, displs, MPI_UNSIGNED_CHAR,
                subarray, local_size, MPI_UNSIGNED_CHAR, 0, MPI_COMM_WORLD);
-
-  printf("[%d] Printing subarray.\n", rank);
 
   //  Count neighbors (and sends borders)
   //  FIX: set neighbors correctly
@@ -57,19 +86,9 @@ void distributeRows(board_t *fullboard) {
 
   printf("[%d] Processing %d rows of %d\n", rank, local_rows,
          fullboard->COL_NUM);
-  if (rank == 0) {
-    for (int i = 0; i < local_rows; i++) {
-      printf("ROW %d: ", i);
-      for (int j = 0; j < fullboard->COL_NUM; j++) {
 
-        printf("%d ", subarray[i * fullboard->COL_NUM + j]);
-      }
-      printf("\n");
-    }
-  }
-
+  printToFile(subarray, rank, local_rows, fullboard->COL_NUM);
   // unsigned char neighbors[D_COL_NUM][D_ROW_NUM];
-  printf("a\n");
   count_neighbors_spherical_world_mpi_v2(subarray, fullboard->COL_NUM,
                                          local_rows, partNeighbors, rank, size);
   printf("[%d] neightbors counted\n", rank);
@@ -83,21 +102,25 @@ void distributeRows(board_t *fullboard) {
 
   MPI_Gatherv(subarray, local_size, MPI_UNSIGNED_CHAR, recv_buffer, sendcounts,
               displs, MPI_UNSIGNED_CHAR, 0, MPI_COMM_WORLD);
-  printf("[%d] gathered\n", rank);
+
   // convert recv_buffer to 2D array
-  // TODO: Check.
   if (rank == 0) {
+    FILE *ptr = fopen("iterations.txt", "a");
     for (int i = 0; i < fullboard->ROW_NUM; i++) {
       for (int j = 0; j < fullboard->COL_NUM; j++) {
         fullboard->cell_state[i][j] = recv_buffer[i * fullboard->COL_NUM + j];
+        fprintf(ptr, "%d ", fullboard->cell_state[i][j]);
       }
+      fprintf(ptr, "\n");
     }
+    fprintf(ptr, "///////////////\n");
+    fclose(ptr);
     free(recv_buffer);
-  }
 
-  free(sendcounts);
-  free(displs);
-  free(partNeighbors);
+    free(sendcounts);
+    free(displs);
+    free(partNeighbors);
+  }
 }
 
 // board and neighbors
@@ -185,9 +208,8 @@ void send_borders(unsigned char *board, int cols, int rows, int rank,
   // Wait sending complete
   //  FIX: stauts is always other. When error, send to all proc finish
   MPI_Wait(&r1, MPI_STATUS_IGNORE);
-  MPI_Wait(&r2, &st2);
-  if (st2.MPI_ERROR != MPI_SUCCESS)
-    printf("[%d] 2\n", rank);
+  MPI_Wait(&r2, MPI_STATUS_IGNORE);
+
   if (MPI_SUCCESS != MPI_SUCCESS) {
     printf("ERROR! Process [%d] received: ", rank);
     switch (st.MPI_ERROR) {
@@ -237,11 +259,9 @@ void count_neighbors_spherical_world_mpi_v2(unsigned char *board, int cols,
   // MPI_Irecv(upperborder, cols, MPI_INT, upperRank, 0,
   // MPI_COMM_WORLD, &r1); MPI_Irecv(lowerborder, cols, MPI_INT,
   // lowerRank, 1, MPI_COMM_WORLD, &r2);
-  printf("[%d] Prepare to send borders\n", rank);
   send_borders(board, cols, rows, rank, size);
-  MPI_Irecv(upperborder, cols, MPI_INT, upperRank, 0, MPI_COMM_WORLD, &r1);
-  MPI_Irecv(lowerborder, cols, MPI_INT, lowerRank, 1, MPI_COMM_WORLD, &r2);
-  printf("[%d] after\n", rank);
+  MPI_Irecv(upperborder, cols, MPI_INT, upperRank, 1, MPI_COMM_WORLD, &r1);
+  MPI_Irecv(lowerborder, cols, MPI_INT, lowerRank, 0, MPI_COMM_WORLD, &r2);
   // Convert to 2D array just to be more clear
   unsigned char cell_state[rows][cols];
   for (int i = 0; i < rows; i++) {
@@ -294,10 +314,10 @@ void count_neighbors_spherical_world_mpi_v2(unsigned char *board, int cols,
   // Wait for both recv
   // FIX: MPI_STATUS_IGNORE
   printf("[%d] Waiting to receivw\n", rank);
-  // MPI_Wait(&r1, MPI_STATUS_IGNORE);
+  MPI_Wait(&r1, MPI_STATUS_IGNORE);
 
   printf("[%d] Waiting to receiv2\n", rank);
-  // MPI_Wait(&r2, MPI_STATUS_IGNORE);
+  MPI_Wait(&r2, MPI_STATUS_IGNORE);
 
   printf("[%d] received borders\n", rank);
   // add neighbors to first and last
