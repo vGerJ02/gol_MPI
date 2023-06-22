@@ -15,10 +15,11 @@ void render_board(SDL_Renderer *renderer, board_t *board,
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
   switch (board->game_state) {
   case RUNNING_STATE:
-    if (Graphical_Mode)
-      render_running_state(renderer, board);
+    if (rank == 0)
+      if (Graphical_Mode)
+        render_running_state(renderer, board);
 
-    if (size > 0) {
+    if (size > 1) {
       // Distribute neighbors, count and evolve
       distributeRows(board, data);
 
@@ -29,8 +30,10 @@ void render_board(SDL_Renderer *renderer, board_t *board,
 
     break;
   case PAUSE_STATE:
-    if (Graphical_Mode)
-      render_pause_state(renderer, board);
+    if (rank == 0)
+      if (Graphical_Mode)
+        render_pause_state(renderer, board);
+
     break;
   default: {
   }

@@ -32,7 +32,6 @@ void printProcWorkToFile(unsigned char *subarray, int rank, int rows,
   }
 }
 void distributeRows(board_t *fullboard, data_mpi_t data) {
-  // Returns the partitioned board of the current process
   int rank, size;
 
   unsigned char *subarray;
@@ -40,14 +39,11 @@ void distributeRows(board_t *fullboard, data_mpi_t data) {
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
   MPI_Comm_size(MPI_COMM_WORLD, &size);
 
+  // copy so it is not 4000x4000
   unsigned char board[fullboard->ROW_NUM][fullboard->COL_NUM];
-  // copy
   for (int i = 0; i < fullboard->ROW_NUM; i++)
     for (int j = 0; j < fullboard->COL_NUM; j++)
       board[i][j] = fullboard->cell_state[i][j];
-
-  data.rows_per_process = fullboard->ROW_NUM / size;
-  data.remaining_rows = fullboard->ROW_NUM % size;
 
   int local_size = data.sendcounts[rank];
   subarray = (unsigned char *)malloc(local_size * sizeof(unsigned char));
@@ -93,6 +89,7 @@ void distributeRows(board_t *fullboard, data_mpi_t data) {
 
     free(recv_buffer);
   }
+  MPI_Barrier(MPI_COMM_WORLD);
   free(partNeighbors);
   free(subarray);
 }
@@ -132,8 +129,8 @@ void click_on_cell(board_t *board, int row, int column) {
     printf("Game is running, hit space to pause and edit.\n");
 }
 
-void count_neighbors_of_1_row(unsigned char *row, int cols, int *neighbors,
-                              int offset) {
+void count_neighbors_of_1_row(unsigned char *row, int cols,
+                              unsigned char *neighbors, int offset) {
   // Counts the neighbors in this row in spherical
   // offset indicates if first row or last
   int i_prev, i_next;
@@ -153,16 +150,18 @@ void send_borders(unsigned char *board, int cols, int rows, int rank,
   MPI_Request r1, r2;
   MPI_Status st, st2;
   int dest;
-  int *neighbors_to_send = (int *)malloc(2 * cols * sizeof(int));
+  unsigned char *neighbors_to_send =
+      (unsigned char *)malloc(2 * cols * sizeof(unsigned char));
   // Initializes to 0
-  memset(neighbors_to_send, 0, 2 * cols * sizeof(int));
+  memset(neighbors_to_send, 0, 2 * cols * sizeof(unsigned char));
 
   // Count neighbors to send
   count_neighbors_of_1_row(&board[0], cols, neighbors_to_send, 0);
   dest = (rank - 1 < 0) ? size - 1 : rank - 1;
 
   // send the first row
-  MPI_Isend(neighbors_to_send, cols, MPI_INT, dest, 0, MPI_COMM_WORLD, &r1);
+  MPI_Isend(neighbors_to_send, cols, MPI_UNSIGNED_CHAR, dest, 0, MPI_COMM_WORLD,
+            &r1);
 
   // Set dest to next border
   dest = (rank + 1 >= size) ? 0 : rank + 1;
@@ -172,11 +171,12 @@ void send_borders(unsigned char *board, int cols, int rows, int rank,
                              cols);
 
     // MPI send neighbors from cols to 2*cols
-    MPI_Isend(&neighbors_to_send[cols], cols, MPI_INT, dest, 1, MPI_COMM_WORLD,
-              &r2);
+    MPI_Isend(&neighbors_to_send[cols], cols, MPI_UNSIGNED_CHAR, dest, 1,
+              MPI_COMM_WORLD, &r2);
   } else { // If block only has one row
     // Send the same as before but to next border
-    MPI_Isend(neighbors_to_send, cols, MPI_INT, dest, 1, MPI_COMM_WORLD, &r2);
+    MPI_Isend(neighbors_to_send, cols, MPI_UNSIGNED_CHAR, dest, 1,
+              MPI_COMM_WORLD, &r2);
   }
 
   // Wait sending complete
@@ -192,8 +192,10 @@ void count_neighbors_spherical_world_mpi_v2(unsigned char *board, int cols,
                                             int rank, int size) {
   int i_prev, i_next, j_prev, j_next;
   // Before, we send the borders and prepare to receive them
-  int *upperborder = (int *)malloc(cols * sizeof(int));
-  int *lowerborder = (int *)malloc(cols * sizeof(int));
+  unsigned char *upperborder =
+      (unsigned char *)malloc(cols * sizeof(unsigned char));
+  unsigned char *lowerborder =
+      (unsigned char *)malloc(cols * sizeof(unsigned char));
   int upperRank = (rank - 1 < 0) ? size - 1 : rank - 1;
   int lowerRank = (rank + 1 >= size) ? 0 : rank + 1;
   MPI_Request r1, r2;
@@ -203,8 +205,10 @@ void count_neighbors_spherical_world_mpi_v2(unsigned char *board, int cols,
     printf("[%d] Sending neighbors to %d and %d %d \n", rank, upperRank,
            lowerRank, size);
     send_borders(board, cols, rows, rank, size);
-    MPI_Irecv(upperborder, cols, MPI_INT, upperRank, 1, MPI_COMM_WORLD, &r1);
-    MPI_Irecv(lowerborder, cols, MPI_INT, lowerRank, 0, MPI_COMM_WORLD, &r2);
+    MPI_Irecv(upperborder, cols, MPI_UNSIGNED_CHAR, upperRank, 1,
+              MPI_COMM_WORLD, &r1);
+    MPI_Irecv(lowerborder, cols, MPI_UNSIGNED_CHAR, lowerRank, 0,
+              MPI_COMM_WORLD, &r2);
   }
   // Convert to 2D array just to be more easy
   unsigned char cell_state[rows][cols];
@@ -256,6 +260,7 @@ void count_neighbors_spherical_world_mpi_v2(unsigned char *board, int cols,
 
   // top cells
   for (int j = 0; j < cols; j++) {
+
     j_prev = (1 < j) ? j - 1 : cols - 1;
     j_next = (j < cols) ? j + 1 : 0;
     if (cell_state[0][j_prev] == ALIVE) {
@@ -277,28 +282,29 @@ void count_neighbors_spherical_world_mpi_v2(unsigned char *board, int cols,
   }
 
   // bottom cells
+  int lastrow = (rows - 1) * cols;
   for (int j = 0; j < cols; j++) {
     j_prev = (1 < j) ? j - 1 : cols - 1;
     j_next = (j < cols) ? j + 1 : 0;
-    if (cell_state[cols - 1][j_prev] == ALIVE) {
+    if (cell_state[rows - 1][j_prev] == ALIVE) {
       // 0 * cols + j = j
-      neighbors[j]++;
+      neighbors[lastrow + j]++;
     }
-    if (cell_state[cols - 2][j_prev] == ALIVE) {
-      neighbors[j]++;
+    if (cell_state[rows - 2][j_prev] == ALIVE) {
+      neighbors[lastrow + j]++;
     }
-    if (cell_state[cols - 2][j] == ALIVE) {
-      neighbors[j]++;
+    if (cell_state[rows - 2][j] == ALIVE) {
+      neighbors[lastrow + j]++;
     }
-    if (cell_state[cols - 2][j_next] == ALIVE) {
-      neighbors[j]++;
+    if (cell_state[rows - 2][j_next] == ALIVE) {
+      neighbors[lastrow + j]++;
     }
-    if (cell_state[cols - 1][j_next] == ALIVE) {
-      neighbors[j]++;
+    if (cell_state[rows - 1][j_next] == ALIVE) {
+      neighbors[lastrow + j]++;
     }
   }
 
-  if (size != 0) {
+  if (size > 0) {
     // Wait for both recv
     MPI_Wait(&r1, MPI_STATUS_IGNORE);
     MPI_Wait(&r2, MPI_STATUS_IGNORE);
